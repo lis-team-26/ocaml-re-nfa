@@ -196,25 +196,27 @@ let eps = Eps
 let chr c = Char (C.singleton c)
 let opt t = alt t eps
 let empty = Empty
-
-let oneof cs = match C.cardinal cs with 0 -> Empty | _ -> Char cs
-
-let range_ l h =
+let range_ maybe_domain l h =
   let rec loop i h acc =
     if i = h then         C.add (Char.chr i) acc
     else loop (succ i) h (C.add (Char.chr i) acc)
-  in loop (Char.code l) (Char.code h) C.empty
+  in 
+  let in_range = loop (Char.code l) (Char.code h) C.empty in
+  match maybe_domain with 
+    |None -> in_range
+    |Some d -> C.inter d in_range
 
-let range l h = Char (range_ l h)
-let any_ = range_ (Char.chr 0) (Char.chr 255)
-let any = Char any_
-
-exception Parse_error of string
-
+let range maybe_domain l h  = Char (range_ maybe_domain l h)
+let any_ maybe_domain = range_ maybe_domain (Char.chr 0) (Char.chr 255)
+let any maybe_domain = Char (any_  maybe_domain)
+type parse_error = Generic | Not_in_domain of char | Bad_range of char * char
 module Parse =
 struct
-  exception Fail
-
+  exception Error of parse_error
+  let check_domain_exn c maybe_d = 
+    match maybe_d with
+    | None -> ()
+    | Some d -> if C.mem c d then () else raise @@ Error (Not_in_domain c)
   module Bracket =
   struct
     (** Follows the POSIX spec
@@ -231,24 +233,37 @@ struct
     type element = Char of char | Range of char * char
     type t = { negated: bool; elements: element list }
 
-    let interpret { negated; elements } =
+    let interpret maybe_domain { negated; elements } =
+    let add_char c acc =
+      check_domain_exn c maybe_domain;
+      C.add c acc
+      in
+    let add_range c1 c2 acc =
+      check_domain_exn c1 maybe_domain;
+      check_domain_exn c2 maybe_domain;
+      if c1 > c2 then raise @@ Error (Bad_range (c1,c2))
+        else C.union (range_ maybe_domain c1 c2) acc      
+  in
+  let fold_fun acc elem =
+    match elem with
+    | Char c -> add_char c acc
+    | Range (c1,c2) -> add_range c1 c2 acc
+  in
       let s =
-        List.fold_right
-          (function Char c -> C.add c
-                  | Range (c1,c2) -> C.union (range_ c1 c2))
-          elements C.empty in
-      if negated then C.diff any_ s
+        List.fold_left fold_fun
+          C.empty elements in
+      if negated then C.diff (any_ maybe_domain) s
       else s
 
-    let parse_element = function
-      | [] -> raise Fail
+    let parse_element  = function
+      | [] -> raise @@ Error Generic
       | ']' :: s -> (None, s)
       | c :: ('-' :: ']' :: _ as s) -> (Some (Char c), s)
       | c1 :: '-' :: c2 :: s -> (Some (Range (c1, c2)), s)
       | c :: s -> (Some (Char c), s)
 
     let parse_initial = function
-      | [] -> raise Fail
+      | [] ->  raise @@ Error Generic
       | c :: ('-' :: ']' :: _ as s) -> (Some (Char c), s)
       | c1 :: '-' :: c2 :: s -> (Some (Range (c1, c2)), s)
       | c :: s -> (Some (Char c), s)
@@ -261,7 +276,6 @@ struct
       match parse_initial s with
       | None, s -> ([], s)
       | Some e, s -> loop [e] s
-
   end
 
   type t =
@@ -275,15 +289,19 @@ struct
     | Any : t
     | Eps : t
 
-  let rec interpret : t -> _ regex = function
+  let rec interpret maybe_domain reg =
+    let interpret = interpret maybe_domain in
+    match reg with
     | Opt t -> opt (interpret t)
-    | Chr c -> chr c
-    | Alt (l, r) -> alt (interpret l) (interpret r)
+    | Chr c -> 
+      check_domain_exn c maybe_domain;  
+      chr c
+    | Alt (l, r) -> alt (interpret  l) (interpret  r)
     | Seq (l, r) -> seq (interpret l) (interpret r)
     | Star t -> star (interpret t)
     | Plus t -> plus (interpret t)
-    | Bracketed elements -> Char (Bracket.interpret elements)
-    | Any -> any
+    | Bracketed elements -> Char (Bracket.interpret maybe_domain elements)
+    | Any -> (any maybe_domain)
     | Eps -> eps
 
    (* We've seen [.  Special characters:
@@ -293,7 +311,7 @@ struct
                   (Bracketed { negated = true; elements }, rest)
     | _ :: _ as s -> let elements, rest = Bracket.parse_elements s in
                 (Bracketed { negated = false; elements }, rest)
-    | [] -> raise Fail
+    | [] ->  raise @@ Error Generic
 
   (** ratom ::= .
                 <character>
@@ -303,7 +321,8 @@ struct
     | '('::rest ->
        begin match re_parse_alt rest with
        | (r, ')' :: rest) -> Some (r, rest)
-       | _ -> raise Fail
+       | _ ->  raise @@ Error Generic
+
        end
     | '['::rest -> Some (re_parse_bracketed rest)
     | [] | ((')'|'|'|'*'|'?'|'+') :: _) -> None
@@ -344,10 +363,12 @@ struct
   let parse s =
     match re_parse_alt (explode s) with
     | (r, []) -> r
-    | exception Fail -> raise (Parse_error s)
-    | (_, _::_) -> raise (Parse_error s)
+    | (_, _::_) -> raise @@ Error Generic
+
 end
 
-let parse s = Parse.(interpret (parse s))
-
-              
+exception Parse_error of string * parse_error
+let parse ?domain s = 
+  try Parse.(interpret domain (parse s))
+  with
+  | Parse.Error(e) -> raise (Parse_error (s,e))

@@ -16,7 +16,7 @@ let usage = "re-nfa [options] regex"
 
 let parse_re r = 
   try Regex.parse r
-  with Regex.Parse_error s -> die "Invalid regular expression: %S\n" s
+  with Regex.Parse_error (s,_) -> die "Invalid regular expression: %S\n" s
 
 let () =
   let r = ref None in
