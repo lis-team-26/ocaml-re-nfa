@@ -262,66 +262,6 @@ struct
       | None, s -> ([], s)
       | Some e, s -> loop [e] s
 
-    type result = { hyphen: bool;
-                    caret: bool;
-                    lbracket: bool;
-                    ranges: (char * char) list; }
-    let ranges (set : C.t) =
-      let adjacent c1 c2 = abs (Char.code c1 - Char.code c2) = 1 in
-      match
-        C.fold
-          (fun c (co, r) ->
-            match c, co with
-            | '-', co -> (co, {r with hyphen = true})
-            | '^', co -> (co, {r with caret = true})
-            | ']', co -> (co, {r with lbracket = true})
-            | c, None -> (Some (c,c), r) 
-            | c, Some (c1,c2) when adjacent c c2 -> (Some (c1, c), r)
-            | c, Some (c1,c2) -> (Some (c,c),
-                                  { r with ranges = (c1,c2) :: r.ranges }))
-          set
-          (None, {hyphen = false; caret = false; lbracket = false; ranges = []})
-      with
-      | None  , r -> {r with ranges = List.rev r.ranges}
-      | Some p, r -> {r with ranges = List.rev (p :: r.ranges)}
-
-    let regex_specials = "*+?.|()["
-
-    let unparse ?(complement=false) (set : C.t) =
-      let pr = Printf.sprintf in
-      let r = ranges set in
-      let conc =
-        List.fold_left
-          (fun s (x,y) -> if x = y then pr "%c%s" x s
-                          else pr "%c-%c%s" x y s)
-          "" in
-      let whenever p s = if p then s else "" in
-      let bracket s = if complement then pr "[^%s]" s else pr "[%s]" s in
-      match r.ranges, r.lbracket, r.caret, r.hyphen with
-      | [(x,y)], false, false, false
-          (* If we have a single non-special character then
-             there's no need for a range expression *)
-           when x = y
-             && not complement
-             && not (String.contains regex_specials x) -> pr "%c" x
-      | _ :: _ as rs, lbracket, caret, hyphen ->
-         (* If we have some non-special characters then we don't need to
-            take extra care to avoid accidentally positioning special
-            characters like ^ the beginning or end *)
-         bracket @@
-         pr "%s%s%s%s"
-           (whenever lbracket "]")
-           (conc rs)
-           (whenever caret "^")
-           (whenever hyphen "-")
-      | [], true, _, _ ->
-         bracket (pr "]%s%s" (whenever r.caret "^") (whenever r.hyphen "-"))
-      | [], false, true , true  -> bracket "-^"
-      | [], false, true , false -> if complement then "[^^]" else "^"
-      | [], false, false, true  -> bracket "-"
-      | [], false, false, false -> pr "[%s%c-%c]"
-                                     (if complement then "" else "^")
-                                     (Char.chr 0) (Char.chr 255)
   end
 
   type t =
@@ -410,8 +350,4 @@ end
 
 let parse s = Parse.(interpret (parse s))
 
-let unparse_charset s =
-  let pos = Parse.Bracket.unparse ~complement:false s
-  and neg = Parse.Bracket.unparse ~complement:true (C.diff any_ s) in
-  if String.length pos <= String.length neg then pos else neg
               

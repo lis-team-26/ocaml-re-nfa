@@ -58,10 +58,6 @@ val parse : string -> t
    Raises [Parse_error] on parse error
 *)
 
-val unparse_charset : charset -> string
-(** [unparse_charset cs] is a string denoting a regular expression
-    that accepts any character in [cs], and nothing else *)
-
 val compile : t -> Nfa.nfa
 (** [compile r] translates [r] to an NFA that succeeds on exactly
     those strings matched by [r] *)
