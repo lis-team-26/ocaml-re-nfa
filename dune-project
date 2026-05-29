@@ -16,6 +16,4 @@
  (name re-nfa)
  (synopsis "Convert regular expressions to NFAs")
  (depends 
-   ocaml
-   (qcheck :with-test)
-   (regenerate :with-test)))
+   ocaml))

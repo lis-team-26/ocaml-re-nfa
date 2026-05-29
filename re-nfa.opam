@@ -9,8 +9,6 @@ bug-reports: "https://github.com/yallop/ocaml-re-nfa/issues"
 depends: [
   "dune" {>= "3.2"}
   "ocaml"
-  "qcheck" {with-test}
-  "regenerate" {with-test}
   "odoc" {with-doc}
 ]
 build: [
